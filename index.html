@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chiaroscuro: Shadow Weaver</title>
+  <meta name="description" content="빛의 각도와 거울을 조작해 실체화된 그림자 다리를 엮어 나아가는 3D 스텔스 퍼즐.">
+  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="game" aria-label="Chiaroscuro: Shadow Weaver 게임 화면"></canvas>
+
+  <header id="hud" class="hud hidden">
+    <div class="hud-stage">
+      <b id="hud-stage">STAGE 1 / 3</b>
+      <span id="hud-name">그림자의 길</span>
+    </div>
+    <div class="hud-hint">
+      <p id="hud-hint"></p>
+      <small>
+        <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 이동 ·
+        <kbd>Space</kbd> 점프 ·
+        <kbd>Q</kbd><kbd>E</kbd> / 드래그 광원 회전 ·
+        <kbd>Z</kbd><kbd>X</kbd> / 세로 드래그 광원 높이 ·
+        <kbd>R</kbd> 재시작
+      </small>
+    </div>
+    <button id="btn-mute" class="icon-btn" type="button" aria-label="사운드 음소거 전환" aria-pressed="false" title="사운드 끄기 (M)">🔊</button>
+  </header>
+
+  <div id="alert" class="alert" role="status">
+    <label>감시자 노출</label>
+    <div class="alert-track"><div id="alert-fill" class="alert-fill"></div></div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="banner" class="banner" aria-hidden="true">
+    <div id="banner-kicker" class="kicker">STAGE 1 / 3</div>
+    <h2 id="banner-title">그림자의 길</h2>
+    <div id="banner-sub" class="sub">THE SHADOW PATH</div>
+  </div>
+
+  <section id="title-screen" class="overlay show">
+    <div class="card">
+      <div class="kicker">A PUZZLE OF LIGHT AND ABSENCE</div>
+      <h1>Chiaroscuro</h1>
+      <div class="sub">SHADOW WEAVER</div>
+      <p class="lead">빛이 닿지 않는 곳이 길이 된다. 광원을 돌려 그림자를 엮고,<br>붉은 감시자의 시선을 피해 심연을 건너라.</p>
+      <div class="controls">
+        <div><span>이동</span><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / 방향키</span></div>
+        <div><span>점프</span><span><kbd>Space</kbd></span></div>
+        <div><span>광원 회전</span><span><kbd>Q</kbd><kbd>E</kbd> / 좌우 드래그</span></div>
+        <div><span>광원 높이</span><span><kbd>Z</kbd><kbd>X</kbd> / 상하 드래그</span></div>
+        <div><span>빠른 재시작</span><span><kbd>R</kbd></span></div>
+        <div><span>음소거 · 줌</span><span><kbd>M</kbd> · 마우스 휠</span></div>
+      </div>
+      <button id="btn-start" class="cta" type="button">시작하기</button>
+      <div class="note">소리는 첫 클릭과 함께 켜집니다. 헤드폰을 권장합니다.</div>
+    </div>
+  </section>
+
+  <section id="ending" class="overlay">
+    <div class="card">
+      <div class="kicker">THE WEAVE IS COMPLETE</div>
+      <h1>빛의 끝에서</h1>
+      <div class="sub">ALL STAGES CLEAR</div>
+      <p class="lead">세 개의 심연을 그림자로 이었습니다.<br>어둠은 더 이상 빈자리가 아니라, 당신이 걸어온 길입니다.</p>
+      <div class="stats">
+        <div><b id="end-time">00:00</b><span>플레이 시간</span></div>
+        <div><b id="end-falls">0</b><span>추락</span></div>
+        <div><b id="end-caught">0</b><span>발각</span></div>
+      </div>
+      <button id="btn-replay" class="cta" type="button">다시 플레이</button>
+    </div>
+  </section>
+
+  <div id="load-error" class="load-error" role="alert"></div>
+
+  <script src="js/geometry.js"></script>
+  <script src="js/stages.js"></script>
+  <script src="js/audio.js"></script>
+  <script src="js/shaders.js"></script>
+  <script src="js/game.js"></script>
+  <script>
+    (function () {
+      function fail(msg) {
+        var el = document.getElementById('load-error');
+        el.textContent = msg;
+        el.className = 'load-error show';
+      }
+      window.addEventListener('error', function (e) {
+        if (!window.SW || !window.SW.booted) fail('게임을 불러오지 못했습니다: ' + (e.message || '스크립트 로드 오류') + ' — 인터넷 연결(Three.js CDN)을 확인한 뒤 새로고침하세요.');
+      });
+      setTimeout(function () {
+        if (!window.SW || !window.SW.booted) fail('Three.js를 CDN에서 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침하세요.');
+      }, 12000);
+    })();
+  </script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+
+    try {
+      window.SW.boot({ THREE, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass, OutputPass });
+    } catch (err) {
+      console.error(err);
+      const el = document.getElementById('load-error');
+      el.textContent = '초기화 오류: ' + err.message;
+      el.className = 'load-error show';
+    }
+  </script>
+</body>
+</html>
