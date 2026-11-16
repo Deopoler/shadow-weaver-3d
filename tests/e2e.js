@@ -1,6 +1,6 @@
 /*
  * End-to-end smoke test: launches headless Chrome, opens index.html straight from disk (file://),
- * and plays all three stages through the real input handlers via the DevTools protocol.
+ * and plays all six stages through the real input handlers via the DevTools protocol.
  *   node tests/e2e.js [screenshot-dir]
  * Requires Chrome and Node 22+ (global WebSocket). Needs internet for the three.js CDN.
  */
@@ -72,7 +72,7 @@ async function main() {
     const r = await send('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(path.join(shotDir, name + '.png'), Buffer.from(r.result.data, 'base64'));
   };
-  const VK = { KeyW: 87, KeyA: 65, KeyS: 83, KeyD: 68, KeyQ: 81, KeyE: 69, KeyR: 82, Space: 32, Enter: 13 };
+  const VK = { KeyW: 87, KeyA: 65, KeyS: 83, KeyD: 68, KeyQ: 81, KeyE: 69, KeyR: 82, KeyZ: 90, KeyX: 88, Space: 32, Enter: 13 };
   const key = (type, code) => send('Input.dispatchKeyEvent', { type, code, key: code === 'Space' ? ' ' : code.replace('Key', '').toLowerCase(), windowsVirtualKeyCode: VK[code] });
   const hold = async (code, ms) => { await key('keyDown', code); await sleep(ms); await key('keyUp', code); };
   const dbg = expr => evaluate('(function(){var d=SW.debug;return ' + expr + ';})()');
@@ -95,6 +95,19 @@ async function main() {
       const code = diff > 0 ? 'KeyE' : 'KeyQ';
       await hold(code, Math.min(700, Math.max(30, Math.abs(diff) * 14)));
       await sleep(120);
+    }
+    return get();
+  };
+  /** Adjust the lamp height with Z/X until it reaches target height. */
+  const aimHeight = async targetH => {
+    const get = () => dbg('d.sim.height');
+    for (let i = 0; i < 400; i++) {
+      const cur = await get();
+      const diff = targetH - cur;
+      if (Math.abs(diff) < 0.25) break;
+      const code = diff > 0 ? 'KeyX' : 'KeyZ';
+      await hold(code, Math.min(600, Math.max(30, Math.abs(diff) * 200)));
+      await sleep(100);
     }
     return get();
   };
@@ -257,12 +270,133 @@ async function main() {
     await walkTo(-5.4, -8, { timeout: 9000, until: 'd.player.y < -1 || (d.player.x < -4.2 && d.player.grounded)' });
     if (await dbg('d.player.y < -1')) { await waitFor('d.player.y === 0', 5000); await sleep(700); continue; }
     if (attempt === 0) await shot('09-stage3-goal-side');
-    await sneak([[-6, -5], [-13.5, -5], [-13.5, -8]], 'd.state !== "playing" || d.player.z > 0');
-    await waitFor('d.state === "ending" || d.player.z > 0', 6000, 'ending');
+    await sneak([[-6, -5], [-13.5, -5], [-13.5, -8]], 'd.stageIndex !== 2 || d.state !== "playing" || d.player.z > 0');
+    await waitFor('(d.stageIndex === 3 && d.state === "playing") || d.player.z > 0', 6000, 'stage 4 load');
   }
-  check('stage 3 cleared and the ending screen is shown', (await dbg('d.state')) === 'ending' && await evaluate('document.getElementById("ending").classList.contains("show")'));
+  check('stage 3 cleared through the portal', (await dbg('d.stageIndex')) === 3);
+  await sleep(1500);
+  await shot('10-stage4-start');
+
+  /* ---- Stage 4 ---- */
+  console.log('Stage 4');
+  check('HUD shows stage 4', (await evaluate('document.getElementById("hud-stage").textContent')).includes('STAGE 4'));
+  const th4 = await aimLamp(136);
+  check('lamp rotates with Q/E to 136°', Math.abs(th4 - 136) < 3, 'theta=' + th4.toFixed(1));
+  const h4high = await aimHeight(17.2);
+  check('lamp height raised with KeyX', h4high > 16, 'height=' + h4high.toFixed(1));
+  await sleep(300);
+  await shot('11-stage4-high-lamp');
+  await walkTo(1.0, -1.0, { timeout: 4000 });
+  await walkTo(2.0, -2.4, { timeout: 4000 });
+  await walkTo(4.0, -3.8, { timeout: 4000 });
+  await walkTo(6.0, -5.3, { timeout: 4000 });
+  await walkTo(8.5, -6.8, { timeout: 4000 });
+  await walkTo(10.0, -7.0, { timeout: 4000 });
+  check('player reached island 1 via high-elevation shadow bridge', await dbg('d.player.x > 8.5 && d.player.y === 0'));
+  await shot('12-stage4-island1');
+
+  await aimLamp(144);
+  const h4low = await aimHeight(10.5);
+  check('lamp height lowered with KeyZ', h4low < 11.5, 'height=' + h4low.toFixed(1));
+  await sleep(300);
+  await shot('13-stage4-low-lamp');
+  await walkTo(14.0, -9.5, { timeout: 4000 });
+  await walkTo(18.0, -12.5, { timeout: 4000 });
+  await walkTo(21.5, -15.0, { timeout: 4000 });
+  await walkTo(25.0, -17.0, { timeout: 4000 });
+  await walkTo(25.5, -13.0, { timeout: 4000 });
+  check('player reached goal platform via stretched low-elevation shadow bridge', await dbg('d.player.x > 24.5 && d.player.y === 0'));
+  await shot('14-stage4-goal-platform');
+
+  for (let attempt = 0; attempt < 5 && (await dbg('d.stageIndex')) === 3; attempt++) {
+    const lost = 'd.stageIndex !== 3 || d.state !== "playing" || d.player.x < 24.5';
+    await sneak([[25.0, -20], [29, -20], [29, -17]], lost);
+    await waitFor('(d.stageIndex === 4 && d.state === "playing") || d.player.x < 24.5', 6000, 'stage 5 load');
+  }
+  check('stage 4 cleared through the portal', (await dbg('d.stageIndex')) === 4);
+  await sleep(1500);
+  await shot('15-stage5-start');
+
+  /* ---- Stage 5 ---- */
+  console.log('Stage 5');
+  check('HUD shows stage 5', (await evaluate('document.getElementById("hud-stage").textContent')).includes('STAGE 5'));
+  const th5 = await aimLamp(146);
+  check('lamp rotates with Q/E to 146°', Math.abs(th5 - 146) < 3, 'theta=' + th5.toFixed(1));
+  await sleep(300);
+  await shot('16-stage5-aimed');
+
+  for (let attempt = 0; attempt < 5 && (await dbg('d.player.x < 6.5 && d.stageIndex === 4')); attempt++) {
+    if (await dbg('d.player.y < -1')) { await waitFor('d.player.y === 0', 5000); await sleep(500); }
+    // Walk towards the edge of platform 0 safely
+    await walkTo(-7.0, 3.8, { timeout: 5000 });
+    // Wait for bridge to be connected and aligned with a large time window ahead
+    await waitFor('SW.World.shadowAt(d.world.polys, 0, 0) && (d.sim.time % 18 > 1.5 && d.sim.time % 18 < 7.0)', 25000, 'dual bobbing bridge alignment');
+    if (attempt === 0) await shot('17-stage5-aligned-bridge');
+    // Cross the dual-bobbing bridge via tested waypoints
+    await walkTo(-3.5, 2.0, { timeout: 3000 });
+    await walkTo(0.5, -0.5, { timeout: 3000 });
+    await walkTo(4.5, -2.5, { timeout: 3000 });
+    await walkTo(8.0, -4.5, { timeout: 3000 });
+    await walkTo(12, -6, { timeout: 4000, until: 'd.player.y < -1 || d.player.x > 7' });
+  }
+  check('crossed timed dual-bobbing shadow bridge to goal platform', await dbg('d.player.x > 6.5 && d.player.y === 0'));
+  await shot('18-stage5-goal-platform');
+
+  for (let attempt = 0; attempt < 5 && (await dbg('d.stageIndex')) === 4; attempt++) {
+    const lost = 'd.stageIndex !== 4 || d.state !== "playing" || d.player.x < 6.5';
+    await sneak([[13, -8]], lost);
+    await waitFor('(d.stageIndex === 5 && d.state === "playing") || d.player.x < 6.5', 6000, 'stage 6 load');
+  }
+  check('stage 5 cleared through the portal', (await dbg('d.stageIndex')) === 5);
+  await sleep(1500);
+  await shot('19-stage6-start');
+
+  /* ---- Stage 6 ---- */
+  console.log('Stage 6');
+  check('HUD shows stage 6', (await evaluate('document.getElementById("hud-stage").textContent')).includes('STAGE 6'));
+
+  // Bridge 1: Start to Center Island
+  await aimLamp(90);
+  await sleep(300);
+  await shot('20-stage6-bridge1');
+  await walkTo(0, -6.5, { timeout: 6000 });
+  await walkTo(0, -2.0, { timeout: 6000 });
+  await walkTo(2.5, 1.2, { timeout: 6000 });
+  check('crossed primary shadow bridge to center island', await dbg('d.player.z > -5 && d.player.y === 0'));
+  await shot('21-stage6-center-island');
+
+  // Bridge 2: Center Island to West Terrace (The Fusion Bridge)
+  await aimLamp(0);
+  await sleep(400);
+  check('primary and reflected shadows combine into fusion bridge', await dbg('d.world.mirror && d.world.mirror.active && d.world.polys.some(function(p){return p.src===0;}) && d.world.polys.some(function(p){return p.src===1;})'));
+  await shot('22-stage6-fusion-bridge');
+  await walkTo(0, 0, { timeout: 5000 });
+  await walkTo(-5, 0, { timeout: 5000 });
+  await walkTo(-10, 0, { timeout: 5000 });
+  await walkTo(-15, 0, { timeout: 5000 });
+  await walkTo(-19, 0, { timeout: 6000 });
+  check('crossed fusion bridge to west terrace', await dbg('d.player.x < -17 && d.player.y === 0'));
+  await shot('23-stage6-west-terrace');
+
+  // Bridge 3: West Terrace to Goal Platform
+  await aimLamp(246);
+  await sleep(300);
+  await shot('24-stage6-bridge3');
+  await walkTo(-19, 4, { timeout: 5000 });
+  await walkTo(-20, 6, { timeout: 5000 });
+  await walkTo(-20, 8.8, { timeout: 6000 });
+  check('crossed reflected shadow bridge to goal platform', await dbg('d.player.z > 8.0 && d.player.y === 0'));
+  await shot('25-stage6-goal-platform');
+
+  // Final sneak to portal
+  for (let attempt = 0; attempt < 6 && (await dbg('d.state')) !== 'ending'; attempt++) {
+    const lost = 'd.state !== "playing" || d.player.z < 8.0';
+    await sneak([[-20, 13]], lost);
+    await waitFor('d.state === "ending" || d.player.z < 8.0', 6000, 'ending');
+  }
+  check('stage 6 cleared and the ending screen is shown', (await dbg('d.state')) === 'ending' && await evaluate('document.getElementById("ending").classList.contains("show")'));
   await sleep(1200);
-  await shot('10-ending');
+  await shot('26-ending');
   console.log('    run stats: time ' + await evaluate('document.getElementById("end-time").textContent') + ', falls ' + await evaluate('document.getElementById("end-falls").textContent') + ', caught ' + await evaluate('document.getElementById("end-caught").textContent'));
 
   console.log('Replay');

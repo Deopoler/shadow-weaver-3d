@@ -1,5 +1,5 @@
 /*
- * Solvability / shortcut verification for the three stages.
+ * Solvability / shortcut verification for all six stages.
  * Uses exactly the same geometry + world code as the game.
  *   node tests/verify.js
  */
@@ -124,6 +124,10 @@ function stateAt(stage, thetaDeg, time) {
   return { theta: thetaDeg * DEG, height: stage.light.height, time: time || 0 };
 }
 
+function stateAtH(stage, thetaDeg, height, time) {
+  return { theta: thetaDeg * DEG, height: height, time: time || 0 };
+}
+
 /* ---------- Stage 1 ---------- */
 console.log('\nStage 1');
 {
@@ -233,6 +237,165 @@ console.log('\nStage 3');
   // the drifting block must never be reachable by the player's head
   const lowest = st.occluders[1].pos[1] - st.occluders[1].bob.amp - st.occluders[1].size[1] / 2;
   check('drifting block stays above jump height', lowest > 2.2, 'lowest underside y=' + lowest.toFixed(2));
+}
+
+/* ---------- Stage 4 (elevation dependent) ---------- */
+console.log('\nStage 4');
+{
+  const st = STAGES[3], grid = makeGrid(st);
+  const t1High = [], t2Low = [];
+  const t1Low = [], t2High = [];
+  const direct = [];
+
+  for (let th = 0; th < 360; th += 2) {
+    // High lamp (H = 16)
+    const wHigh = walkable(grid, World.compute(st, stateAtH(st, th, 16)).polys);
+    if (reachPlatforms(grid, wHigh, 0, WALK_HOP).has(1)) t1High.push(th);
+    if (reachPlatforms(grid, wHigh, 1, WALK_HOP).has(2)) t2High.push(th);
+
+    // Low lamp (H = 10.5)
+    const wLow = walkable(grid, World.compute(st, stateAtH(st, th, 10.5)).polys);
+    if (reachPlatforms(grid, wLow, 0, WALK_HOP).has(1)) t1Low.push(th);
+    if (reachPlatforms(grid, wLow, 1, WALK_HOP).has(2)) t2Low.push(th);
+
+    // Check direct shortcuts across all heights
+    for (let h = st.light.minH; h <= st.light.maxH; h += 1.0) {
+      const wh = walkable(grid, World.compute(st, stateAtH(st, th, h)).polys);
+      if (reachPlatforms(grid, wh, 0, MAX_JUMP).has(2)) direct.push({ th, h });
+    }
+  }
+
+  check('high lamp connects start -> island 1', t1High.length >= 3, 'theta: ' + ranges(t1High));
+  check('low lamp connects island 1 -> goal', t2Low.length >= 3, 'theta: ' + ranges(t2Low));
+  check('elevation adjustment is mandatory (low lamp fails bridge 1, high lamp fails bridge 2)',
+    t1Low.length === 0 && t2High.length === 0);
+  check('no lamp setting bridges start directly to goal', direct.length === 0);
+
+  const initW = walkable(grid, World.compute(st, stateAt(st, st.light.theta0)).polys);
+  check('initial lamp setting solves neither bridge',
+    !reachPlatforms(grid, initW, 0, MAX_JUMP).has(1) && !reachPlatforms(grid, initW, 1, MAX_JUMP).has(2));
+
+  const lowest = st.occluders[0].pos[1] - st.occluders[0].size[1] / 2;
+  check('obelisk stays above jump height', lowest > 2.2, 'lowest underside y=' + lowest.toFixed(2));
+}
+
+/* ---------- Stage 5 (dual bobbing cycle) ---------- */
+console.log('\nStage 5');
+{
+  const st = STAGES[4], grid = makeGrid(st);
+  const period = 18; // LCM of 6 and 9
+  const DT = 0.15;
+  const { nx, nz, plat } = grid;
+
+  function timedReach(th, from, to, t0, duration) {
+    let cur = new Uint8Array(nx * nz);
+    for (let i = 0; i < plat.length; i++) if (plat[i] === from) cur[i] = 1;
+    for (let t = t0; t < t0 + duration; t += DT) {
+      const w = walkable(grid, World.compute(st, stateAt(st, th, t)).polys);
+      const next = new Uint8Array(nx * nz);
+      let hit = false;
+      for (let iz = 0; iz < nz; iz++) for (let ix = 0; ix < nx; ix++) {
+        const i = iz * nx + ix;
+        if (!w[i]) continue;
+        let ok = false;
+        for (let dz = -1; dz <= 1 && !ok; dz++) for (let dx = -1; dx <= 1 && !ok; dx++) {
+          const jx = ix + dx, jz = iz + dz;
+          if (jx < 0 || jx >= nx || jz < 0 || jz >= nz) continue;
+          if (cur[jz * nx + jx]) ok = true;
+        }
+        if (ok) { next[i] = 1; if (plat[i] === to) hit = true; }
+      }
+      if (hit) return true;
+      cur = next;
+    }
+    return false;
+  }
+
+  const solved = [];
+  for (let th = 130; th <= 165; th += 2) {
+    if (timedReach(th, 0, 1, 0, period * 1.5)) solved.push(th);
+  }
+  check('timed crossing across dual bobbing slabs exists', solved.length >= 3, 'theta: ' + ranges(solved));
+
+  const bestTh = 146;
+  let openPhases = 0;
+  const N = 36;
+  for (let k = 0; k < N; k++) {
+    const wk = walkable(grid, World.compute(st, stateAt(st, bestTh, period * k / N)).polys);
+    if (reachPlatforms(grid, wk, 0, WALK_HOP).has(1)) openPhases++;
+  }
+  check('bridge is only open for a timed window (timing matters)', openPhases > 0 && openPhases < N,
+    'open ' + openPhases + '/' + N + ' phases (' + Math.round(100 * openPhases / N) + '%) at ' + bestTh + '°');
+
+  const stSlab0Only = Object.assign({}, st, { occluders: [st.occluders[0]] });
+  const stSlab1Only = Object.assign({}, st, { occluders: [st.occluders[1]] });
+  let slab0Can = false, slab1Can = false;
+  for (let k = 0; k < 12; k++) {
+    const t = period * k / 12;
+    const w0 = walkable(grid, World.compute(stSlab0Only, stateAt(st, bestTh, t)).polys);
+    const w1 = walkable(grid, World.compute(stSlab1Only, stateAt(st, bestTh, t)).polys);
+    if (reachPlatforms(grid, w0, 0, MAX_JUMP).has(1)) slab0Can = true;
+    if (reachPlatforms(grid, w1, 0, MAX_JUMP).has(1)) slab1Can = true;
+  }
+  check('both bobbing slabs are required (neither alone can bridge the abyss)', !slab0Can && !slab1Can);
+
+  const initW = walkable(grid, World.compute(st, stateAt(st, st.light.theta0, 0)).polys);
+  check('initial light angle does not connect', !reachPlatforms(grid, initW, 0, MAX_JUMP).has(1));
+
+  const lowest0 = st.occluders[0].pos[1] - st.occluders[0].bob.amp - st.occluders[0].size[1] / 2;
+  const lowest1 = st.occluders[1].pos[1] - st.occluders[1].bob.amp - st.occluders[1].size[1] / 2;
+  check('both bobbing slabs stay above jump height', lowest0 > 2.2 && lowest1 > 2.2,
+    'undersides y=' + lowest0.toFixed(2) + ', y=' + lowest1.toFixed(2));
+}
+
+/* ---------- Stage 6 (mirror-shadow fusion & multi-reaim) ---------- */
+console.log('\nStage 6');
+{
+  const st = STAGES[5], grid = makeGrid(st);
+  const t01 = [], t12 = [], t23 = [];
+  const t01m = [], t12m = [], t23m = [];
+  const sc02 = [], sc13 = [], sc03 = [];
+
+  for (let th = 0; th < 360; th += 2) {
+    const polys = World.compute(st, stateAt(st, th)).polys;
+    const w = walkable(grid, polys);
+    if (reachPlatforms(grid, w, 0, WALK_HOP).has(1)) t01.push(th);
+    if (reachPlatforms(grid, w, 1, WALK_HOP).has(2)) t12.push(th);
+    if (reachPlatforms(grid, w, 2, WALK_HOP).has(3)) t23.push(th);
+
+    const r0m = reachPlatforms(grid, w, 0, MAX_JUMP);
+    const r1m = reachPlatforms(grid, w, 1, MAX_JUMP);
+    const r2m = reachPlatforms(grid, w, 2, MAX_JUMP);
+    if (r0m.has(1)) t01m.push(th);
+    if (r1m.has(2)) t12m.push(th);
+    if (r2m.has(3)) t23m.push(th);
+
+    if (r0m.has(2)) sc02.push(th);
+    if (r1m.has(3)) sc13.push(th);
+    if (r0m.has(3)) sc03.push(th);
+  }
+
+  check('bridge 1 (start -> center island) exists', t01.length >= 3, 'theta: ' + ranges(t01));
+  check('bridge 2 (mirror-shadow fusion across wide abyss) exists', t12.length >= 3, 'theta: ' + ranges(t12));
+  check('bridge 3 (west terrace -> goal) exists', t23.length >= 3, 'theta: ' + ranges(t23));
+
+  const stNoMirror = Object.assign({}, st, { mirror: null });
+  let noMirrorPossible = false;
+  for (let th = 0; th < 360; th += 2) {
+    const w = walkable(grid, World.compute(stNoMirror, stateAt(stNoMirror, th)).polys);
+    if (reachPlatforms(grid, w, 1, MAX_JUMP).has(2)) noMirrorPossible = true;
+  }
+  check('mirror is strictly required for bridge 2 (primary shadow alone cannot reach)', !noMirrorPossible);
+
+  check('no shortcut skips center island (0 -> 2 impossible without re-aim)', sc02.length === 0, ranges(sc02));
+  check('no shortcut skips west terrace (1 -> 3 impossible without re-aim)', sc13.length === 0, ranges(sc13));
+  check('no single angle solves the entire stage (0 -> 3 impossible)', sc03.length === 0);
+
+  const initW = walkable(grid, World.compute(st, stateAt(st, st.light.theta0)).polys);
+  check('initial light angle solves none of the bridges',
+    !reachPlatforms(grid, initW, 0, MAX_JUMP).has(1) &&
+    !reachPlatforms(grid, initW, 1, MAX_JUMP).has(2) &&
+    !reachPlatforms(grid, initW, 2, MAX_JUMP).has(3));
 }
 
 /* ---------- global sanity ---------- */

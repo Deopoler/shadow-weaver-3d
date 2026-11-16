@@ -22,7 +22,7 @@
 | 파일 | 역할 |
 |---|---|
 | `js/geometry.js` | 레이-평면 투영, Monotone Chain 볼록 껍질, Point-in-Polygon, 선분-볼록체 차폐 판정, 거울 반사, 월드 시뮬레이션 |
-| `js/stages.js` | 스테이지 1~3 데이터 |
+| `js/stages.js` | 스테이지 1~6 데이터 |
 | `js/audio.js` | Web Audio 절차적 사운드(드론, 광원 험, 차임, 경고 펄스, 팡파르) |
 | `js/shaders.js` | 볼류메트릭 콘, 그림자 다리, 잔물결, 파티클, 포탈, 거울, 글리치 후처리 GLSL |
 | `js/game.js` | 렌더링(블룸 포함), 입력, 물리, 게임 루프, UI |
@@ -31,5 +31,5 @@
 
 ```
 node tests/verify.js   # 수학 단위 테스트 + 스테이지 풀이 가능성/지름길/안전지대 검증
-node tests/e2e.js      # 헤드리스 Chrome으로 3개 스테이지를 실제 입력으로 끝까지 플레이 (Node 22+, Chrome 필요)
+node tests/e2e.js      # 헤드리스 Chrome으로 6개 스테이지를 실제 입력으로 끝까지 플레이 (Node 22+, Chrome 필요)
 ```
