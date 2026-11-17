@@ -637,8 +637,73 @@
     var camFocus = new THREE.Vector3();
     var camZoom = 1;
     var keys = {};
-    var drag = { active: false, x: 0, y: 0, activity: 0 };
-    function endDrag() { drag.active = false; canvas.classList.remove('dragging'); }
+    var drag = { active: false, x: 0, y: 0, activity: 0, pointerId: null };
+    function endDrag(e) {
+      if (e && drag.pointerId !== undefined && drag.pointerId !== null && e.pointerId !== drag.pointerId) return;
+      if (drag.active && canvas.releasePointerCapture && drag.pointerId !== undefined && drag.pointerId !== null) {
+        try { canvas.releasePointerCapture(drag.pointerId); } catch (err) {}
+      }
+      drag.active = false;
+      drag.pointerId = null;
+      canvas.classList.remove('dragging');
+    }
+
+    /* ---------- Touch controls state ---------- */
+    var isTouch = false;
+    var touchInput = { x: 0, z: 0 };
+    var joyPointerId = null;
+    var joyTouchId = null;
+    var joyCenter = { x: 0, y: 0 };
+    var JOY_RADIUS = 38;
+    var JOY_DEADZONE = 5;
+
+    var joyEl = $('touch-joystick');
+    var knobEl = $('touch-joystick-knob');
+    var btnJump = $('btn-touch-jump');
+    var btnRestart = $('btn-touch-restart');
+
+    function resetJoystick() {
+      touchInput.x = 0;
+      touchInput.z = 0;
+      joyPointerId = null;
+      joyTouchId = null;
+      if (knobEl) knobEl.style.transform = 'translate3d(0, 0, 0)';
+    }
+
+    function updateTouchUI() {
+      var el = $('touch-layer');
+      if (!el) return;
+      var visible = isTouch && state === 'playing';
+      el.className = visible ? 'touch-layer' : 'touch-layer hidden';
+      el.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      if (!visible) resetJoystick();
+    }
+
+    function updateJoyCenter() {
+      if (!joyEl) return;
+      var r = joyEl.getBoundingClientRect();
+      joyCenter.x = r.left + r.width / 2;
+      joyCenter.y = r.top + r.height / 2;
+    }
+
+    function applyJoyMove(clientX, clientY) {
+      var dx = clientX - joyCenter.x;
+      var dy = clientY - joyCenter.y;
+      var dist = Math.hypot(dx, dy);
+      if (dist > JOY_DEADZONE) {
+        var travel = Math.min(dist, JOY_RADIUS);
+        var norm = (travel - JOY_DEADZONE) / (JOY_RADIUS - JOY_DEADZONE);
+        touchInput.x = (dx / dist) * norm;
+        touchInput.z = (dy / dist) * norm;
+        var kx = (dx / dist) * travel;
+        var ky = (dy / dist) * travel;
+        if (knobEl) knobEl.style.transform = 'translate3d(' + kx.toFixed(1) + 'px, ' + ky.toFixed(1) + 'px, 0)';
+      } else {
+        touchInput.x = 0;
+        touchInput.z = 0;
+        if (knobEl) knobEl.style.transform = 'translate3d(0, 0, 0)';
+      }
+    }
     var toastTimer = 0;
     var bannerTimer = 0;
 
@@ -688,6 +753,7 @@
         ripples[r].mesh.visible = false;
       }
       endDrag();
+      resetJoystick();
       $('hud-stage').textContent = 'STAGE ' + stage.id + ' / ' + STAGES.length;
       $('hud-name').textContent = stage.name;
       $('hud-hint').textContent = stage.hint;
@@ -707,6 +773,7 @@
     function startRespawn(type) {
       if (respawn) return;
       endDrag();
+      resetJoystick();
       respawn = { t: 0, type: type, moved: false };
       if (type === 'caught') {
         stats.caught++;
@@ -749,7 +816,9 @@
 
     function showEnding() {
       state = 'ending';
+      updateTouchUI();
       endDrag();
+      resetJoystick();
       var t = Math.floor(stats.time);
       var mm = Math.floor(t / 60), ss = t % 60;
       $('end-time').textContent = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
@@ -768,6 +837,7 @@
       $('title-screen').className = 'overlay';
       $('hud').className = 'hud';
       state = 'playing';
+      updateTouchUI();
       showBanner(stage);
     }
 
@@ -779,6 +849,7 @@
       $('hud').className = 'hud';
       loadStage(0, false);
       state = 'playing';
+      updateTouchUI();
       fx.fade = 0;
       fx.fadeTarget = 1;
       showBanner(stage);
@@ -801,12 +872,14 @@
       if (e.code === 'KeyM') toggleMute();
     });
     root.addEventListener('keyup', function (e) { keys[e.code] = false; });
-    root.addEventListener('blur', function () { keys = {}; drag.active = false; });
+    root.addEventListener('blur', function () { keys = {}; endDrag(); resetJoystick(); });
 
     canvas.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (drag.active) return;
       Audio.init();
       drag.active = true;
+      drag.pointerId = e.pointerId;
       drag.x = e.clientX;
       drag.y = e.clientY;
       if (canvas.setPointerCapture) { try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } }
@@ -814,6 +887,7 @@
     });
     canvas.addEventListener('pointermove', function (e) {
       if (!drag.active) return;
+      if (drag.pointerId !== undefined && drag.pointerId !== null && e.pointerId !== drag.pointerId) return;
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX;
       drag.y = e.clientY;
@@ -824,11 +898,156 @@
     });
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointercancel', endDrag);
+    root.addEventListener('pointerup', endDrag);
+    root.addEventListener('pointercancel', endDrag);
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
       camZoom = Math.max(0.65, Math.min(1.6, camZoom + (e.deltaY > 0 ? 0.08 : -0.08)));
     }, { passive: false });
+
+    /* ---------- Touch detection & control events ---------- */
+    try {
+      if (root.matchMedia && root.matchMedia('(pointer: coarse)').matches) {
+        isTouch = true;
+      }
+      var mq = root.matchMedia && root.matchMedia('(pointer: coarse)');
+      if (mq && mq.addEventListener) {
+        mq.addEventListener('change', function (ev) {
+          if (ev.matches) { isTouch = true; updateTouchUI(); }
+        });
+      }
+    } catch (err) {}
+
+    root.addEventListener('touchstart', function () {
+      if (!isTouch) {
+        isTouch = true;
+        updateTouchUI();
+      }
+    }, { passive: true, once: true });
+    root.addEventListener('pointerdown', function (e) {
+      if (e.pointerType === 'touch' && !isTouch) {
+        isTouch = true;
+        updateTouchUI();
+      }
+    }, { passive: true });
+
+    if (joyEl) {
+      joyEl.addEventListener('pointerdown', function (e) {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        if (joyPointerId !== null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        Audio.init();
+        joyPointerId = e.pointerId;
+        updateJoyCenter();
+        if (joyEl.setPointerCapture) {
+          try { joyEl.setPointerCapture(e.pointerId); } catch (err) {}
+        }
+        applyJoyMove(e.clientX, e.clientY);
+      });
+
+      joyEl.addEventListener('pointermove', function (e) {
+        if (joyPointerId !== e.pointerId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        applyJoyMove(e.clientX, e.clientY);
+      });
+
+      function onJoyPointerEnd(e) {
+        if (joyPointerId !== e.pointerId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (joyEl.releasePointerCapture) {
+          try { joyEl.releasePointerCapture(e.pointerId); } catch (err) {}
+        }
+        resetJoystick();
+      }
+
+      joyEl.addEventListener('pointerup', onJoyPointerEnd);
+      joyEl.addEventListener('pointercancel', onJoyPointerEnd);
+
+      joyEl.addEventListener('touchstart', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        Audio.init();
+        if (joyPointerId !== null) return;
+        var t = e.changedTouches[0];
+        if (!t) return;
+        joyTouchId = t.identifier;
+        updateJoyCenter();
+        applyJoyMove(t.clientX, t.clientY);
+      }, { passive: false });
+
+      joyEl.addEventListener('touchmove', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (joyPointerId !== null) return;
+        for (var i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === joyTouchId) {
+            applyJoyMove(e.changedTouches[i].clientX, e.changedTouches[i].clientY);
+            break;
+          }
+        }
+      }, { passive: false });
+
+      function onJoyTouchEnd(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (joyPointerId !== null) return;
+        for (var i = 0; i < e.changedTouches.length; i++) {
+          if (e.changedTouches[i].identifier === joyTouchId) {
+            resetJoystick();
+            break;
+          }
+        }
+      }
+
+      joyEl.addEventListener('touchend', onJoyTouchEnd);
+      joyEl.addEventListener('touchcancel', onJoyTouchEnd);
+    }
+
+    var lastJumpTime = 0;
+    function handleTouchJump(e) {
+      if (e) {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+      }
+      var now = performance.now();
+      if (now - lastJumpTime < 80) return;
+      lastJumpTime = now;
+      Audio.init();
+      if (state === 'playing') {
+        player.jumpBuf = 0.13;
+      }
+    }
+
+    var lastRestartTime = 0;
+    function handleTouchRestart(e) {
+      if (e) {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+      }
+      var now = performance.now();
+      if (now - lastRestartTime < 300) return;
+      lastRestartTime = now;
+      Audio.init();
+      if (state === 'playing') {
+        restartStage();
+      }
+    }
+
+    if (btnJump) {
+      btnJump.addEventListener('pointerdown', handleTouchJump);
+      btnJump.addEventListener('touchstart', handleTouchJump, { passive: false });
+      btnJump.addEventListener('click', handleTouchJump);
+    }
+
+    if (btnRestart) {
+      btnRestart.addEventListener('pointerdown', handleTouchRestart);
+      btnRestart.addEventListener('touchstart', handleTouchRestart, { passive: false });
+      btnRestart.addEventListener('click', handleTouchRestart);
+    }
 
     function toggleMute() {
       Audio.init();
@@ -977,10 +1196,15 @@
       var control = state === 'playing' && !respawn;
       var ix = 0, iz = 0;
       if (control) {
-        ix = ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0);
-        iz = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.KeyW || keys.ArrowUp) ? 1 : 0);
+        var kx = ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0);
+        var kz = ((keys.KeyS || keys.ArrowDown) ? 1 : 0) - ((keys.KeyW || keys.ArrowUp) ? 1 : 0);
+        var kl = Math.hypot(kx, kz);
+        if (kl > 0) { kx /= kl; kz /= kl; }
+
+        ix = kx + touchInput.x;
+        iz = kz + touchInput.z;
         var il = Math.hypot(ix, iz);
-        if (il > 0) { ix /= il; iz /= il; }
+        if (il > 1) { ix /= il; iz /= il; }
       }
       var k = 1 - Math.exp(-(p.grounded ? 14 : 6) * dt);
       p.vx += (ix * SPEED - p.vx) * k;
@@ -1121,6 +1345,7 @@
         var d = Math.hypot(player.x - stage.portal[0], player.z - stage.portal[1]);
         if (d < 1.25) {
           state = 'clear';
+          updateTouchUI();
           player.vx = 0;
           player.vy = 0;
           player.vz = 0;
@@ -1147,6 +1372,7 @@
           } else {
             loadStage(stageIndex + 1, true);
             state = 'playing';
+            updateTouchUI();
             fx.fade = 0;
             fx.fadeTarget = 1;
             showBanner(stage);
@@ -1253,9 +1479,12 @@
       get world() { return world; },
       get exposure() { return exposure; },
       get fx() { return fx; },
+      get isTouch() { return isTouch; },
+      get touchInput() { return touchInput; },
+      setTouch: function (v) { isTouch = !!v; updateTouchUI(); },
       renderer: renderer, composer: composer, scene: scene, camera: camera,
       begin: beginGame,
-      load: function (i) { loadStage(i, true); state = 'playing'; fx.fadeTarget = 1; }
+      load: function (i) { loadStage(i, true); state = 'playing'; updateTouchUI(); fx.fadeTarget = 1; }
     };
     root.requestAnimationFrame(frame);
   };

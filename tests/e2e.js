@@ -412,6 +412,91 @@ async function main() {
   await evaluate('document.getElementById("btn-mute").click()');
   check('mute toggle works', await evaluate('SW.Audio.isMuted() === true && document.getElementById("btn-mute").getAttribute("aria-pressed") === "true"'));
 
+  console.log('Touch controls emulation');
+  await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+  await send('Emulation.setEmitTouchEventsForMouse', { enabled: true });
+
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 300, y: 300, id: 0 }]
+  });
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: []
+  });
+  await sleep(150);
+
+  const touchVisible = await evaluate(
+    '!document.getElementById("touch-layer").classList.contains("hidden") && ' +
+    'window.getComputedStyle(document.getElementById("touch-layer")).display !== "none"'
+  );
+  check('touch layer is visible during play', touchVisible);
+  await shot('27-touch-layer-visible');
+
+  const joyRect = await evaluate(
+    'var r = document.getElementById("touch-joystick").getBoundingClientRect(); ' +
+    '({ x: r.left + r.width / 2, y: r.top + r.height / 2 })'
+  );
+  const startX = await dbg('d.player.x');
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: joyRect.x, y: joyRect.y, id: 0 }]
+  });
+  await sleep(50);
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: joyRect.x + 36, y: joyRect.y, id: 0 }]
+  });
+  await sleep(400);
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: []
+  });
+  await sleep(100);
+
+  const endX = await dbg('d.player.x');
+  check('dragging joystick moves the player', endX > startX + 0.1, 'startX=' + startX.toFixed(2) + ' endX=' + endX.toFixed(2));
+
+  await waitFor('d.player.grounded && d.player.y === 0', 3000, 'grounded before touch jump');
+  const jumpRect = await evaluate(
+    'var r = document.getElementById("btn-touch-jump").getBoundingClientRect(); ' +
+    '({ x: r.left + r.width / 2, y: r.top + r.height / 2 })'
+  );
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: jumpRect.x, y: jumpRect.y, id: 0 }]
+  });
+  await sleep(50);
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: []
+  });
+
+  const airborne = await waitFor('d.player.y > 0.05 && !d.player.grounded', 2000, 'touch jump airborne');
+  check('tapping Jump makes the player leave the ground', airborne);
+  await waitFor('d.player.grounded && d.player.y === 0', 3000, 'touch jump landed');
+
+  const startTheta = await dbg('d.sim.theta');
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: 500, y: 300, id: 1 }]
+  });
+  await sleep(50);
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [{ x: 440, y: 300, id: 1 }]
+  });
+  await sleep(50);
+  await send('Input.dispatchTouchEvent', {
+    type: 'touchEnd',
+    touchPoints: []
+  });
+  const endTheta = await dbg('d.sim.theta');
+  check('lamp rotates with touch drag on canvas', Math.abs(endTheta - startTheta) > 0.05, 'diff=' + Math.abs(endTheta - startTheta).toFixed(3));
+
+  await send('Emulation.setTouchEmulationEnabled', { enabled: false });
+  await send('Emulation.setEmitTouchEventsForMouse', { enabled: false });
+
   console.log('Runtime errors');
   check('no exceptions or console errors', errors.length === 0, errors.length ? '\n    ' + errors.join('\n    ') : '');
 
