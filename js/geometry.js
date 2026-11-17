@@ -59,6 +59,16 @@
     return inside;
   }
 
+  function polygonArea(poly) {
+    var n = poly ? poly.length : 0;
+    if (n < 3) return 0;
+    var a = 0;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      a += poly[j][0] * poly[i][1] - poly[i][0] * poly[j][1];
+    }
+    return Math.abs(a) * 0.5;
+  }
+
   function polygonCentroid(poly) {
     var n = poly.length;
     var a = 0, cx = 0, cz = 0;
@@ -74,6 +84,93 @@
       return [sx / Math.max(1, n), sz / Math.max(1, n)];
     }
     return [cx / (3 * a), cz / (3 * a)];
+  }
+
+  /**
+   * Sutherland-Hodgman convex polygon clipping: intersects `subject` with `clip` (both convex).
+   * Handles either winding of `clip` and returns hull-ordered vertices (or [] if degenerate).
+   */
+  function clipConvexPolygon(subject, clip) {
+    if (!subject || !clip || subject.length < 3 || clip.length < 3) return [];
+    var cn = clip.length;
+    var signed = 0;
+    var i, j;
+    for (i = 0, j = cn - 1; i < cn; j = i++) {
+      signed += clip[j][0] * clip[i][1] - clip[i][0] * clip[j][1];
+    }
+    if (Math.abs(signed) < 1e-12) return [];
+    var ccw = signed > 0;
+    var out = subject.slice();
+    for (i = 0; i < cn; i++) {
+      var a = ccw ? clip[i] : clip[(i + 1) % cn];
+      var b = ccw ? clip[(i + 1) % cn] : clip[i];
+      var input = out;
+      var inLen = input.length;
+      if (inLen === 0) return [];
+      out = [];
+      var s = input[inLen - 1];
+      var sVal = cross2(a, b, s);
+      for (j = 0; j < inLen; j++) {
+        var e = input[j];
+        var eVal = cross2(a, b, e);
+        if (eVal >= -1e-9) {
+          if (sVal < -1e-9) {
+            var t = sVal / (sVal - eVal);
+            out.push([s[0] + (e[0] - s[0]) * t, s[1] + (e[1] - s[1]) * t]);
+          }
+          out.push(e);
+        } else if (sVal >= -1e-9) {
+          var t2 = sVal / (sVal - eVal);
+          out.push([s[0] + (e[0] - s[0]) * t2, s[1] + (e[1] - s[1]) * t2]);
+        }
+        s = e;
+        sVal = eVal;
+      }
+    }
+    if (out.length < 3) return [];
+    var hull = convexHull(out);
+    return hull.length >= 3 && polygonArea(hull) > 1e-7 ? hull : [];
+  }
+
+  /**
+   * Smoothly bevels razor-thin acute vertices (interior angle < ~45 deg, cos > 0.7) produced when
+   * a mirror boundary clips diagonally across a shadow edge at a shallow grazing angle.
+   * Why: grazing clip lines otherwise form long sub-player-width needles (width -> 0 at the tip,
+   * narrower than 2 * PLAYER_R = 0.64) that are not fair walkable bridges and can create point-grid
+   * jump shortcuts. Ramps smoothly with angle and caps at 35% of adjacent edge length so polygon
+   * area varies continuously without jumps and loses only a tiny sliver.
+   * Applied ONLY to mirror-clipped shadow polygons, never to primary shadows.
+   */
+  function trimSpikes(poly, minW) {
+    var n = poly ? poly.length : 0;
+    if (n < 3) return [];
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var prev = poly[(i + n - 1) % n];
+      var p = poly[i];
+      var next = poly[(i + 1) % n];
+      var ux = prev[0] - p[0], uz = prev[1] - p[1];
+      var vx = next[0] - p[0], vz = next[1] - p[1];
+      var ul = Math.sqrt(ux * ux + uz * uz);
+      var vl = Math.sqrt(vx * vx + vz * vz);
+      if (ul < 1e-6 || vl < 1e-6) continue;
+      var dot = (ux * vx + uz * vz) / (ul * vl);
+      if (dot > 0.7) {
+        var sinHalf = Math.sqrt(Math.max(0, (1 - dot) * 0.5));
+        if (sinHalf > 1e-4) {
+          var k = Math.min(1, (dot - 0.7) / 0.2);
+          var minEdge = ul < vl ? ul : vl;
+          var dWant = (minW * 0.5) / sinHalf;
+          var dCap = minEdge * 0.35;
+          var d = k * (dWant < dCap ? dWant : dCap);
+          out.push([p[0] + (ux / ul) * d, p[1] + (uz / ul) * d]);
+          out.push([p[0] + (vx / vl) * d, p[1] + (vz / vl) * d]);
+          continue;
+        }
+      }
+      out.push(p);
+    }
+    return out.length >= 3 ? convexHull(out) : [];
   }
 
   function inRect(x, z, r) {
@@ -233,11 +330,37 @@
     return [px, py, pz];
   }
 
+  /**
+   * Ground polygon (on y = 0) illuminated through the mirror rectangle from virtual light `Lp`.
+   * Clips the mirror rectangle vertically to [max(0, yBottom), min(yTop, Lp.y - 0.05)] so upward
+   * rays never project to the ground and no point ever lands on the far side of the mirror plane.
+   */
+  function mirrorGroundRegion(Lp, m) {
+    if (mirrorDist(Lp, m) >= -1e-6 || Lp[1] <= 0.05) return [];
+    var y0 = Math.max(0, m.center[1] - m.height / 2);
+    var y1 = Math.min(m.center[1] + m.height / 2, Lp[1] - 0.05);
+    if (y1 <= y0 + 1e-6) return [];
+    var tx = -m.normal[1], tz = m.normal[0];
+    var hw = m.width / 2;
+    var x0 = m.center[0] - hw * tx, z0 = m.center[2] - hw * tz;
+    var x1 = m.center[0] + hw * tx, z1 = m.center[2] + hw * tz;
+    var t0 = Lp[1] / (Lp[1] - y0);
+    var t1 = Lp[1] / (Lp[1] - y1);
+    return convexHull([
+      [Lp[0] + (x0 - Lp[0]) * t0, Lp[2] + (z0 - Lp[2]) * t0],
+      [Lp[0] + (x1 - Lp[0]) * t0, Lp[2] + (z1 - Lp[2]) * t0],
+      [Lp[0] + (x1 - Lp[0]) * t1, Lp[2] + (z1 - Lp[2]) * t1],
+      [Lp[0] + (x0 - Lp[0]) * t1, Lp[2] + (z0 - Lp[2]) * t1]
+    ]);
+  }
+
   /* ------------------------------------------------------------------ */
   /* World simulation                                                    */
   /* ------------------------------------------------------------------ */
 
   var World = {};
+  var sampleBuf = new Array(10);
+  var c3Buf = [0, 0, 0];
 
   World.lightPos = function (light, theta, height) {
     return [
@@ -277,23 +400,50 @@
       var r = reflectPoint(L, m);
       mirror = { active: false, Lp: r.p, hit: null, target: null };
       if (r.d > 0.2) {
-        for (i = 0; i < occ.length; i++) {
-          var oc = occ[i];
-          if (mirrorDist(oc.center, m) <= 0.2) continue;
-          var hit = mirrorHit(r.p, oc.center, m);
-          if (!hit) continue;
-          var blocked = false;
-          for (var k = 0; k < occ.length; k++) {
-            if (segmentHitsConvex(L, hit, occ[k].planes)) { blocked = true; break; }
-          }
-          if (blocked) continue;
-          var mp = projectShadow(r.p, oc.verts);
-          if (mp.length < 3) continue;
-          polys.push({ pts: mp, src: 1, occ: i });
-          if (!mirror.active) {
-            mirror.active = true;
-            mirror.hit = hit;
-            mirror.target = oc.center;
+        var mPoly = mirrorGroundRegion(r.p, m);
+        if (mPoly.length >= 3) {
+          for (i = 0; i < occ.length; i++) {
+            var oc = occ[i];
+            if (mirrorDist(oc.center, m) <= 0.2) continue;
+            var raw = projectShadow(r.p, oc.verts);
+            var clipped = clipConvexPolygon(raw, mPoly);
+            if (clipped.length < 3) continue;
+            var mp = trimSpikes(clipped, 0.5);
+            if (mp.length < 3 || polygonArea(mp) < 0.02) continue;
+
+            var c2 = polygonCentroid(mp);
+            var sY = r.p[1] > 0.05 ? Math.max(0, Math.min(1, (r.p[1] - oc.center[1]) / r.p[1])) : 0.5;
+            c3Buf[0] = r.p[0] + (c2[0] - r.p[0]) * sY;
+            c3Buf[1] = oc.center[1];
+            c3Buf[2] = r.p[2] + (c2[1] - r.p[2]) * sY;
+            sampleBuf[0] = oc.center;
+            sampleBuf[1] = c3Buf;
+            for (var vIdx = 0; vIdx < 8; vIdx++) sampleBuf[2 + vIdx] = oc.verts[vIdx];
+
+            var chosenHit = null;
+            for (var sIdx = 0; sIdx < 10; sIdx++) {
+              var tgt = sampleBuf[sIdx];
+              if (mirrorDist(tgt, m) <= 0.05) continue;
+              var hit = mirrorHit(r.p, tgt, m);
+              if (!hit) continue;
+              var blocked = false;
+              for (var k = 0; k < occ.length; k++) {
+                if (segmentHitsConvex(L, hit, occ[k].planes)) { blocked = true; break; }
+                if (k !== i && segmentHitsConvex(hit, tgt, occ[k].planes)) { blocked = true; break; }
+              }
+              if (!blocked) {
+                chosenHit = hit;
+                break;
+              }
+            }
+            if (!chosenHit) continue;
+
+            polys.push({ pts: mp, src: 1, occ: i });
+            if (!mirror.active) {
+              mirror.active = true;
+              mirror.hit = chosenHit;
+              mirror.target = oc.center;
+            }
           }
         }
       }
@@ -351,7 +501,10 @@
     TAU: TAU,
     convexHull: convexHull,
     pointInPolygon: pointInPolygon,
+    polygonArea: polygonArea,
     polygonCentroid: polygonCentroid,
+    clipConvexPolygon: clipConvexPolygon,
+    trimSpikes: trimSpikes,
     inRect: inRect,
     pushOutOfRect: pushOutOfRect,
     hexaLocal: hexaLocal,
@@ -362,7 +515,8 @@
     projectShadow: projectShadow,
     mirrorDist: mirrorDist,
     reflectPoint: reflectPoint,
-    mirrorHit: mirrorHit
+    mirrorHit: mirrorHit,
+    mirrorGroundRegion: mirrorGroundRegion
   };
   SW.World = World;
 
