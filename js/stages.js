@@ -119,13 +119,13 @@
       start: [-12, 6],
       portal: [13, -8],
       platforms: [
-        { x0: -16, x1: -6.5, z0: 2.5, z1: 11, spawn: [-12, 6] },
-        { x0: 6.5, x1: 16, z0: -11, z1: -2.5, spawn: [12, -6] }
+        { x0: -16, x1: -5.0, z0: 2.0, z1: 11, spawn: [-12, 6] },
+        { x0: 5.0, x1: 16, z0: -11, z1: -2.0, spawn: [12, -6] }
       ],
       light: { pivot: [0, 0], radius: 8, height: 10, minH: 9, maxH: 12.5, theta0: 35 },
       occluders: [
-        { kind: 'slab', pos: [-4.30, 3.78, 3.01], size: [7.4, 0.4, 1.8], rotY: 35, bob: { amp: 0.53, period: 6, phase: 0.75 } },
-        { kind: 'slab', pos: [-1.28, 5.94, 0.89], size: [4.8, 0.4, 1.8], rotY: 35, bob: { amp: 0.67, period: 9, phase: 0.25 } },
+        { kind: 'slab', pos: [-4.30, 3.78, 3.01], size: [6.0, 0.4, 1.8], rotY: 35, bob: { amp: 0.55, period: 6, phase: 0.75 } },
+        { kind: 'slab', pos: [-1.28, 5.94, 0.89], size: [4.0, 0.4, 1.8], rotY: 35, bob: { amp: 0.68, period: 9, phase: 0.75 } },
         { kind: 'pillar', pos: [14.5, 0.9, -4.5], size: [1.3, 1.8, 1.3], solid: true }
       ],
       sentinels: [

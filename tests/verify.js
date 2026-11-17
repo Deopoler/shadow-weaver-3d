@@ -318,14 +318,84 @@ console.log('\nStage 5');
   check('timed crossing across dual bobbing slabs exists', solved.length >= 3, 'theta: ' + ranges(solved));
 
   const bestTh = 146;
-  let openPhases = 0;
-  const N = 36;
+  const N = 180;
+  const openArray = [];
   for (let k = 0; k < N; k++) {
     const wk = walkable(grid, World.compute(st, stateAt(st, bestTh, period * k / N)).polys);
-    if (reachPlatforms(grid, wk, 0, WALK_HOP).has(1)) openPhases++;
+    openArray.push(reachPlatforms(grid, wk, 0, WALK_HOP).has(1));
   }
-  check('bridge is only open for a timed window (timing matters)', openPhases > 0 && openPhases < N,
-    'open ' + openPhases + '/' + N + ' phases (' + Math.round(100 * openPhases / N) + '%) at ' + bestTh + '°');
+  const openPhases = openArray.filter(Boolean).length;
+  const openFrac = openPhases / N;
+
+  // Continuous open windows (handling circular wrap-around over period)
+  let firstFalse = -1;
+  for (let k = 0; k < N; k++) { if (!openArray[k]) { firstFalse = k; break; } }
+  const windows = [];
+  if (firstFalse === -1) {
+    windows.push(period);
+  } else {
+    let inWindow = false, startK = 0;
+    for (let step = 0; step < N; step++) {
+      const k = (firstFalse + step) % N;
+      if (openArray[k] && !inWindow) {
+        inWindow = true; startK = k;
+      } else if (!openArray[k] && inWindow) {
+        inWindow = false;
+        const len = (k - startK + N) % N;
+        windows.push(len * (period / N));
+      }
+    }
+    if (inWindow) {
+      const len = (firstFalse - startK + N) % N;
+      windows.push(len * (period / N));
+    }
+  }
+  const longestWindow = windows.length ? Math.max(...windows) : 0;
+  const shortestWindow = windows.length ? Math.min(...windows) : 0;
+
+  check('open fraction is within target band (25% ~ 50%)',
+    openFrac >= 0.25 && openFrac <= 0.50,
+    'open ' + openPhases + '/' + N + ' phases (' + Math.round(100 * openFrac) + '%) at ' + bestTh + '° | longest: ' + longestWindow.toFixed(2) + 's, shortest: ' + shortestWindow.toFixed(2) + 's');
+
+  // Simulate walking along the route over time
+  const walkRoute = [
+    [st.platforms[0].x1 - 0.2, 3.2],
+    [-2.0, 1.6],
+    [0.2, -0.2],
+    [2.6, -1.8],
+    [st.platforms[1].x0 + 0.2, -3.5]
+  ];
+  let walkDist = 0;
+  for (let i = 1; i < walkRoute.length; i++) {
+    walkDist += Math.hypot(walkRoute[i][0] - walkRoute[i - 1][0], walkRoute[i][1] - walkRoute[i - 1][1]);
+  }
+  const SPEED = 4.0;
+  const walkTime = walkDist / SPEED;
+
+  function simulateWalkAcross(t0) {
+    let curX = walkRoute[0][0], curZ = walkRoute[0][1], t = t0;
+    const dt = 0.05;
+    for (let i = 1; i < walkRoute.length; i++) {
+      const tx = walkRoute[i][0], tz = walkRoute[i][1];
+      while (Math.hypot(tx - curX, tz - curZ) > 0.01) {
+        const dx = tx - curX, dz = tz - curZ, l = Math.hypot(dx, dz);
+        const step = Math.min(l, SPEED * dt);
+        curX += (dx / l) * step; curZ += (dz / l) * step; t += dt;
+        const w = World.compute(st, stateAt(st, bestTh, t));
+        const sup = World.supportAt(st, w.polys, curX, curZ);
+        if (sup.platform < 0 && !sup.shadow) return false;
+      }
+    }
+    return true;
+  }
+
+  let walkSucceeded = false;
+  for (let k = 0; k < N; k++) {
+    if (simulateWalkAcross(period * k / N)) { walkSucceeded = true; break; }
+  }
+  check('bridge stays open continuously long enough to walk across (>= 1.5x walk time)',
+    walkSucceeded && longestWindow >= walkTime * 1.5,
+    'walk dist: ' + walkDist.toFixed(2) + ' units (' + walkTime.toFixed(2) + 's at speed ' + SPEED.toFixed(1) + '), longest window: ' + longestWindow.toFixed(2) + 's (margin: ' + (longestWindow / walkTime).toFixed(2) + 'x)');
 
   const stSlab0Only = Object.assign({}, st, { occluders: [st.occluders[0]] });
   const stSlab1Only = Object.assign({}, st, { occluders: [st.occluders[1]] });

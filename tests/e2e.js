@@ -327,27 +327,58 @@ async function main() {
   await sleep(300);
   await shot('16-stage5-aimed');
 
-  for (let attempt = 0; attempt < 5 && (await dbg('d.player.x < 6.5 && d.stageIndex === 4')); attempt++) {
+  const bridgePts = [
+    [-4.8, 3.2],
+    [-2.0, 1.6],
+    [ 0.2, -0.2],
+    [ 2.6, -1.8],
+    [ 5.5, -3.5],
+    [ 8.0, -4.5],
+    [11.0, -5.5]
+  ];
+
+  const bridgeIsWalkable = pts => dbg(`(function(){
+    var st = SW.STAGES[d.stageIndex], pts = ${JSON.stringify(pts)};
+    function sim(sp) {
+      var x = d.player.x, z = d.player.z, t = d.sim.time + 0.15, dt = 0.05;
+      for (var i = 0; i < pts.length; i++) {
+        var guard = 0;
+        while (Math.hypot(pts[i][0] - x, pts[i][1] - z) > 0.15 && guard++ < 2000) {
+          var dx = pts[i][0] - x, dz = pts[i][1] - z, l = Math.hypot(dx, dz), stp = Math.min(l, sp * dt);
+          x += (dx / l) * stp; z += (dz / l) * stp; t += dt;
+          var w = SW.World.compute(st, { theta: d.sim.theta, height: d.sim.height, time: t });
+          var sup = SW.World.supportAt(st, w.polys, x, z);
+          if (sup.platform < 0 && !sup.shadow) return false;
+        }
+      }
+      return true;
+    }
+    return sim(3.2) && sim(3.8);
+  })()`);
+
+  for (let attempt = 0; attempt < 5 && (await dbg('d.player.x < 5.0 && d.stageIndex === 4')); attempt++) {
     if (await dbg('d.player.y < -1')) { await waitFor('d.player.y === 0', 5000); await sleep(500); }
     // Walk towards the edge of platform 0 safely
-    await walkTo(-7.0, 3.8, { timeout: 5000 });
-    // Wait for bridge to be connected and aligned with a large time window ahead
-    await waitFor('SW.World.shadowAt(d.world.polys, 0, 0) && (d.sim.time % 18 > 1.5 && d.sim.time % 18 < 7.0)', 25000, 'dual bobbing bridge alignment');
+    await walkTo(-5.5, 3.2, { timeout: 6000 });
+    // Wait until the bridge is open and will stay open for the whole crossing
+    const tWait = Date.now();
+    while (Date.now() - tWait < 45000 && !(await bridgeIsWalkable(bridgePts))) {
+      await sleep(60);
+    }
     if (attempt === 0) await shot('17-stage5-aligned-bridge');
     // Cross the dual-bobbing bridge via tested waypoints
-    await walkTo(-3.5, 2.0, { timeout: 5000, until: 'd.player.y < -1' });
-    await walkTo(0.5, -0.5, { timeout: 5000, until: 'd.player.y < -1' });
-    await walkTo(4.5, -2.5, { timeout: 5000, until: 'd.player.y < -1' });
-    await walkTo(8.0, -4.5, { timeout: 5000, until: 'd.player.y < -1' });
-    await walkTo(12, -6, { timeout: 5000, until: 'd.player.y < -1 || d.player.x > 7' });
+    for (const p of bridgePts) {
+      if (await dbg('d.player.y < -1')) break;
+      await walkTo(p[0], p[1], { timeout: 6000, until: 'd.player.y < -1', tol: 0.35 });
+    }
   }
-  check('crossed timed dual-bobbing shadow bridge to goal platform', await dbg('d.player.x > 6.5 && d.player.y === 0'));
+  check('crossed timed dual-bobbing shadow bridge to goal platform', await dbg('d.player.x > 5.0 && d.player.y === 0'));
   await shot('18-stage5-goal-platform');
 
   for (let attempt = 0; attempt < 5 && (await dbg('d.stageIndex')) === 4; attempt++) {
-    const lost = 'd.stageIndex !== 4 || d.state !== "playing" || d.player.x < 6.5';
+    const lost = 'd.stageIndex !== 4 || d.state !== "playing" || d.player.x < 5.0';
     await sneak([[13, -8]], lost);
-    await waitFor('(d.stageIndex === 5 && d.state === "playing") || d.player.x < 6.5', 6000, 'stage 6 load');
+    await waitFor('(d.stageIndex === 5 && d.state === "playing") || d.player.x < 5.0', 6000, 'stage 6 load');
   }
   check('stage 5 cleared through the portal', (await dbg('d.stageIndex')) === 5);
   await sleep(1500);
