@@ -971,7 +971,7 @@
         e.preventDefault();
         e.stopPropagation();
         Audio.init();
-        if (joyPointerId !== null) return;
+        if (joyPointerId !== null || joyTouchId !== null) return;
         var t = e.changedTouches[0];
         if (!t) return;
         joyTouchId = t.identifier;
@@ -1037,16 +1037,18 @@
       }
     }
 
+    // One input path per button: Pointer Events where available, otherwise legacy touch events.
+    // (Listening to pointerdown + touchstart + click made a late compatibility click queue a second jump.)
+    var pressEvent = root.PointerEvent ? 'pointerdown' : ('ontouchstart' in root ? 'touchstart' : 'click');
+    function blockClick(e) { e.preventDefault(); e.stopPropagation(); }
     if (btnJump) {
-      btnJump.addEventListener('pointerdown', handleTouchJump);
-      btnJump.addEventListener('touchstart', handleTouchJump, { passive: false });
-      btnJump.addEventListener('click', handleTouchJump);
+      btnJump.addEventListener(pressEvent, handleTouchJump, { passive: false });
+      if (pressEvent !== 'click') btnJump.addEventListener('click', blockClick);
     }
 
     if (btnRestart) {
-      btnRestart.addEventListener('pointerdown', handleTouchRestart);
-      btnRestart.addEventListener('touchstart', handleTouchRestart, { passive: false });
-      btnRestart.addEventListener('click', handleTouchRestart);
+      btnRestart.addEventListener(pressEvent, handleTouchRestart, { passive: false });
+      if (pressEvent !== 'click') btnRestart.addEventListener('click', blockClick);
     }
 
     function toggleMute() {
