@@ -31,5 +31,6 @@
 
 ```
 node tests/verify.js   # 수학 단위 테스트 + 스테이지 풀이 가능성/지름길/안전지대 검증
+node tests/mirror.js   # 거울 반사 그림자 클리핑·차폐·연속성 단위 테스트
 node tests/e2e.js      # 헤드리스 Chrome으로 6개 스테이지를 실제 입력으로 끝까지 플레이 (Node 22+, Chrome 필요)
 ```
