@@ -362,9 +362,12 @@ async function main() {
     await walkTo(-5.5, 3.2, { timeout: 6000 });
     // Wait until the bridge is open and will stay open for the whole crossing
     const tWait = Date.now();
-    while (Date.now() - tWait < 45000 && !(await bridgeIsWalkable(bridgePts))) {
+    let walkable = false;
+    while (Date.now() - tWait < 45000 && !(walkable = await bridgeIsWalkable(bridgePts))) {
       await sleep(60);
     }
+    // never walk blind into the void: if no safe window was predicted, retry the attempt
+    if (!walkable) { console.log('    (no walkable stage 5 window within 45 s, retrying)'); continue; }
     if (attempt === 0) await shot('17-stage5-aligned-bridge');
     // Cross the dual-bobbing bridge via tested waypoints
     for (const p of bridgePts) {
