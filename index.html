@@ -63,7 +63,7 @@
         <div><span>빠른 재시작</span><span><kbd>R</kbd></span></div>
         <div><span>음소거 · 줌</span><span><kbd>M</kbd> · 마우스 휠</span></div>
       </div>
-      <button id="btn-start" class="cta" type="button">시작하기</button>
+      <button id="btn-start" class="cta" type="button" disabled>불러오는 중…</button>
       <div class="note">소리는 첫 클릭과 함께 켜집니다. 헤드폰을 권장합니다.</div>
     </div>
   </section>
@@ -92,16 +92,21 @@
   <script src="js/game.js"></script>
   <script>
     (function () {
+      var cdnTimer = null;
+      var bootFailed = false;
       function fail(msg) {
+        bootFailed = true;
+        if (cdnTimer) { clearTimeout(cdnTimer); cdnTimer = null; }
         var el = document.getElementById('load-error');
         el.textContent = msg;
         el.className = 'load-error show';
       }
+      window.SW_bootFail = fail;
       window.addEventListener('error', function (e) {
         if (!window.SW || !window.SW.booted) fail('게임을 불러오지 못했습니다: ' + (e.message || '스크립트 로드 오류') + ' — 인터넷 연결(Three.js CDN)을 확인한 뒤 새로고침하세요.');
       });
-      setTimeout(function () {
-        if (!window.SW || !window.SW.booted) fail('Three.js를 CDN에서 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침하세요.');
+      cdnTimer = setTimeout(function () {
+        if (!bootFailed && (!window.SW || !window.SW.booted)) fail('Three.js를 CDN에서 불러오지 못했습니다. 인터넷 연결을 확인한 뒤 새로고침하세요.');
       }, 12000);
     })();
   </script>
@@ -117,9 +122,13 @@
       window.SW.boot({ THREE, EffectComposer, RenderPass, UnrealBloomPass, ShaderPass, OutputPass });
     } catch (err) {
       console.error(err);
-      const el = document.getElementById('load-error');
-      el.textContent = '초기화 오류: ' + err.message;
-      el.className = 'load-error show';
+      if (window.SW_bootFail) {
+        window.SW_bootFail('초기화 오류: ' + err.message);
+      } else {
+        const el = document.getElementById('load-error');
+        el.textContent = '초기화 오류: ' + err.message;
+        el.className = 'load-error show';
+      }
     }
   </script>
 </body>

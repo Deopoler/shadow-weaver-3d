@@ -42,9 +42,9 @@
     'varying vec3 vViewV;',
     'void main(){',
     '  float d = clamp(-vLocal.y, 0.0, 1.0);',                       // 0 at the lamp, 1 at the far end
-    '  float atten = pow(1.0 - d, uFalloff) / (1.0 + uDecay * d * d);', // distance attenuation
-    '  float facing = abs(dot(normalize(vNormalV), normalize(vViewV)));',
-    '  float soft = pow(facing, uEdge);',                             // dissolve the silhouette
+    '  float atten = pow(max(0.0, 1.0 - d), uFalloff) / (1.0 + uDecay * d * d);', // distance attenuation
+    '  float facing = clamp(abs(dot(normalize(vNormalV), normalize(vViewV))), 0.0, 1.0);',
+    '  float soft = pow(max(0.0, facing), uEdge);',                             // dissolve the silhouette
     '  float ang = atan(vLocal.z, vLocal.x);',
     '  float streak = 0.78 + 0.22 * sin(ang * 13.0 + uTime * 0.6 + d * 5.0) * sin(ang * 5.0 - uTime * 0.35);',
     '  float nearFade = smoothstep(0.0, 0.035, d);',
@@ -185,9 +185,9 @@
     '  float swirl = sin(a * 3.0 + r * 9.0 - uTime * 2.4) * 0.5 + 0.5;',
     '  float swirl2 = sin(a * 5.0 - r * 14.0 + uTime * 1.6) * 0.5 + 0.5;',
     '  float disc = 1.0 - smoothstep(0.82, 1.0, r);',
-    '  float glow = pow(1.0 - clamp(r, 0.0, 1.0), 1.4);',
+    '  float glow = pow(max(0.0, 1.0 - clamp(r, 0.0, 1.0)), 1.4);',
     '  vec3 col = mix(vec3(0.42, 0.2, 1.0), vec3(0.2, 0.95, 1.0), swirl);',
-    '  col += vec3(1.0, 0.92, 0.8) * pow(glow, 3.0) * 1.6;',
+    '  col += vec3(1.0, 0.92, 0.8) * (glow * glow * glow) * 1.6;',
     '  float alpha = disc * (0.22 + 0.5 * swirl * swirl2 + 0.6 * glow);',
     '  gl_FragColor = vec4(col * alpha * 1.6, alpha);',
     '}'
@@ -214,7 +214,9 @@
     'varying vec3 vNormalV;',
     'varying vec3 vViewV;',
     'void main(){',
-    '  float fres = pow(1.0 - abs(dot(normalize(vNormalV), normalize(vViewV))), 2.0);',
+    '  float ndv = clamp(abs(dot(normalize(vNormalV), normalize(vViewV))), 0.0, 1.0);',
+    '  float oneMinus = max(0.0, 1.0 - ndv);',
+    '  float fres = oneMinus * oneMinus;',
     '  vec3 base = mix(vec3(0.02, 0.035, 0.06), vec3(0.09, 0.19, 0.27), vUv.y);',
     '  float band = 1.0 - smoothstep(0.0, 0.07, abs(fract((vUv.x * 0.6 + vUv.y) * 1.4 - uTime * 0.06) - 0.5));',
     '  float band2 = 1.0 - smoothstep(0.0, 0.02, abs(fract((vUv.x * 0.6 + vUv.y) * 1.4 - uTime * 0.06 + 0.13) - 0.5));',

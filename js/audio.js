@@ -11,6 +11,7 @@
   var bus = null;         // dry mix
   var send = null;        // echo/reverb send
   var hum = null;         // lamp motor voice
+  var alertFilter = null; // persistent filter for alert pulse
   var ready = false;
   var muted = false;
   var bellTimer = 2.5;
@@ -53,9 +54,18 @@
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
-    if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, t + attack + decay);
+    if (freqEnd) {
+      o.frequency.setValueAtTime(freq, t);
+      o.frequency.exponentialRampToValueAtTime(freqEnd, t + attack + decay);
+    }
     o.start(t);
     o.stop(t + attack + decay + 0.05);
+    o.onended = function () {
+      try {
+        o.disconnect();
+        g.disconnect();
+      } catch (e) {}
+    };
     return o;
   }
 
@@ -64,12 +74,24 @@
     var partials = [1, 2.0, 3.01, 4.2, 5.43];
     var levels = [1, 0.45, 0.22, 0.14, 0.07];
     var out = gain(1, bus);
-    if (wet) {
-      var w = gain(wet, send);
-      out.connect(w);
-    }
+    var w = wet ? gain(wet, send) : null;
+    if (w) out.connect(w);
+    var remaining = partials.length;
     for (var i = 0; i < partials.length; i++) {
-      tone('sine', freq * partials[i], t, 0.004, dur / (1 + i * 0.7), vol * levels[i], out);
+      var o = tone('sine', freq * partials[i], t, 0.004, dur / (1 + i * 0.7), vol * levels[i], out);
+      (function (oscNode) {
+        var prevEnded = oscNode.onended;
+        oscNode.onended = function () {
+          if (prevEnded) prevEnded();
+          remaining--;
+          if (remaining <= 0) {
+            try {
+              out.disconnect();
+              if (w) w.disconnect();
+            } catch (e) {}
+          }
+        };
+      })(o);
     }
   }
 
@@ -87,6 +109,7 @@
 
     // feedback delay network used as a cheap, dreamy reverb
     send = gain(1, null);
+    alertFilter = filter('lowpass', 260, 4, bus);
     var wetOut = gain(0.5, master);
     var times = [0.293, 0.431, 0.617];
     for (var i = 0; i < times.length; i++) {
@@ -108,6 +131,7 @@
     droneGain.connect(bus);
     var wet = gain(0.35, send);
     droneGain.connect(wet);
+    droneGain.gain.setValueAtTime(0.0001, now());
     droneGain.gain.exponentialRampToValueAtTime(0.2, now() + 6);
 
     // slow filter breathing
@@ -148,7 +172,9 @@
   /** Must be called from a user gesture. Safe to call repeatedly. */
   Audio.init = function () {
     if (ctx) {
-      if (ctx.state === 'suspended') ctx.resume();
+      if (ctx.state !== 'running') {
+        try { ctx.resume(); } catch (e) {}
+      }
       return;
     }
     var AC = root.AudioContext || root.webkitAudioContext;
@@ -159,7 +185,9 @@
       startDrone();
       startHum();
       ready = true;
-      if (ctx.state === 'suspended') ctx.resume();
+      if (ctx.state !== 'running') {
+        try { ctx.resume(); } catch (e) {}
+      }
     } catch (err) {
       ready = false;
       if (root.console) root.console.warn('Audio unavailable:', err);
@@ -207,8 +235,8 @@
         alertTimer = 0.52 - 0.34 * alert;
         var vol = 0.16 + 0.3 * alert;
         tone('sine', 74, t, 0.008, 0.2, vol, bus, 40);
-        var lp = filter('lowpass', 260 + alert * 500, 4, bus);
-        tone('sawtooth', 55, t, 0.01, 0.16, vol * 0.5, lp, 49);
+        if (alertFilter) alertFilter.frequency.setValueAtTime(260 + alert * 500, t);
+        tone('sawtooth', 55, t, 0.01, 0.16, vol * 0.5, alertFilter || bus, 49);
         tone('square', 880 + alert * 440, t + 0.02, 0.004, 0.05, 0.012 + 0.02 * alert, bus);
       }
     } else {
@@ -264,6 +292,7 @@
     if (!ready) return;
     var t = now();
     var lp = filter('bandpass', 1400, 0.8, bus);
+    var remaining = 5;
     for (var v = 0; v < 5; v++) {
       var g = gain(0, lp);
       var o = osc('square', 200, g);
@@ -275,8 +304,26 @@
       g.gain.setValueAtTime(0, t + 0.54);
       o.start(t);
       o.stop(t + 0.56);
+      (function (oscNode, gainNode) {
+        oscNode.onended = function () {
+          try {
+            oscNode.disconnect();
+            gainNode.disconnect();
+          } catch (e) {}
+          remaining--;
+          if (remaining <= 0) {
+            try { lp.disconnect(); } catch (e) {}
+          }
+        };
+      })(o, g);
     }
-    tone('sawtooth', 330, t, 0.01, 0.7, 0.14, filter('lowpass', 900, 3, bus), 41);
+    var lowF = filter('lowpass', 900, 3, bus);
+    var oSaw = tone('sawtooth', 330, t, 0.01, 0.7, 0.14, lowF, 41);
+    var prevSaw = oSaw.onended;
+    oSaw.onended = function () {
+      if (prevSaw) prevSaw();
+      try { lowF.disconnect(); } catch (e) {}
+    };
     tone('sine', 98, t, 0.01, 0.9, 0.3, bus, 36);
   };
 
@@ -298,18 +345,37 @@
     var wet = gain(0.6, send);
     var dry = gain(1, bus);
     dry.connect(wet);
+    var fanLp = filter('lowpass', 1800, 1, dry);
+    var chord = finale ? [146.83, 220.0, 293.66, 369.99, 440.0, 587.33, 880.0] : [146.83, 293.66, 369.99, 440.0, 587.33];
+    var remaining = notes.length * 3 + chord.length * 2;
+    function noteDone() {
+      remaining--;
+      if (remaining <= 0) {
+        try {
+          fanLp.disconnect();
+          dry.disconnect();
+          wet.disconnect();
+        } catch (e) {}
+      }
+    }
+    function attachDone(oscNode) {
+      var prev = oscNode.onended;
+      oscNode.onended = function () {
+        if (prev) prev();
+        noteDone();
+      };
+    }
     for (var i = 0; i < notes.length; i++) {
       var tt = t + i * step;
-      tone('triangle', notes[i], tt, 0.008, 0.5, 0.13, dry);
-      tone('sine', notes[i] * 2, tt, 0.008, 0.35, 0.05, dry);
-      tone('sawtooth', notes[i], tt, 0.01, 0.3, 0.025, filter('lowpass', 1800, 1, dry));
+      attachDone(tone('triangle', notes[i], tt, 0.008, 0.5, 0.13, dry));
+      attachDone(tone('sine', notes[i] * 2, tt, 0.008, 0.35, 0.05, dry));
+      attachDone(tone('sawtooth', notes[i], tt, 0.01, 0.3, 0.025, fanLp));
     }
     var end = t + notes.length * step;
-    var chord = finale ? [146.83, 220.0, 293.66, 369.99, 440.0, 587.33, 880.0] : [146.83, 293.66, 369.99, 440.0, 587.33];
     var len = finale ? 3.6 : 1.9;
     for (var c = 0; c < chord.length; c++) {
-      tone('triangle', chord[c], end, 0.03, len, 0.085, dry);
-      tone('sine', chord[c] * 2.005, end, 0.05, len * 0.8, 0.03, dry);
+      attachDone(tone('triangle', chord[c], end, 0.03, len, 0.085, dry));
+      attachDone(tone('sine', chord[c] * 2.005, end, 0.05, len * 0.8, 0.03, dry));
     }
     bell(1174.66, end, 0.07, len, 0.9);
     if (finale) {

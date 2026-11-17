@@ -56,7 +56,7 @@ html, body {
   transition: opacity 0.6s ease, transform 0.6s ease;
   z-index: 5;
 }
-.hud.hidden { opacity: 0; transform: translate(-50%, -24px); pointer-events: none; }
+.hud.hidden { opacity: 0; transform: translate(-50%, -24px); pointer-events: none; visibility: hidden; }
 
 .hud-stage { display: flex; flex-direction: column; line-height: 1.15; white-space: nowrap; }
 .hud-stage b {
@@ -200,10 +200,11 @@ kbd {
   background: radial-gradient(ellipse at 50% 40%, rgba(6, 8, 16, 0.35), rgba(3, 4, 9, 0.9) 75%);
   opacity: 0;
   visibility: hidden;
+  pointer-events: none;
   transition: opacity 0.8s ease, visibility 0.8s ease;
   z-index: 10;
 }
-.overlay.show { opacity: 1; visibility: visible; }
+.overlay.show { opacity: 1; visibility: visible; pointer-events: auto; }
 
 .card {
   width: min(560px, 100%);
@@ -260,6 +261,7 @@ kbd {
 }
 .cta:hover { transform: translateY(-1px); box-shadow: 0 0 46px rgba(90, 220, 255, 0.45); }
 .cta:active { transform: translateY(1px) scale(0.98); }
+.cta:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; transform: none; box-shadow: none; }
 .card .note { margin-top: 16px; font-size: 11px; color: var(--dim); letter-spacing: 0.04em; }
 
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 28px; }

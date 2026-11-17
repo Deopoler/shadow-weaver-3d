@@ -29,10 +29,21 @@
     /* Renderer / scene / post-processing                                */
     /* ================================================================ */
     var canvas = $('game');
-    var renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false, powerPreference: 'high-performance' });
+    var renderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: false, powerPreference: 'high-performance' });
+    } catch (e) {
+      var errEl = $('load-error');
+      if (errEl) {
+        errEl.textContent = 'WebGL을 초기화할 수 없습니다. 브라우저의 가속 설정 또는 그래픽 드라이버를 확인하세요.';
+        errEl.className = 'load-error show';
+      }
+      throw e;
+    }
+    var w = Math.max(1, root.innerWidth), h = Math.max(1, root.innerHeight);
     var pixelRatio = Math.min(root.devicePixelRatio || 1, 2);
     renderer.setPixelRatio(pixelRatio);
-    renderer.setSize(root.innerWidth, root.innerHeight);
+    renderer.setSize(w, h);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -42,20 +53,37 @@
     scene.background = new THREE.Color(0x030409);
     scene.fog = new THREE.FogExp2(0x030409, 0.017);
 
-    var camera = new THREE.PerspectiveCamera(42, root.innerWidth / root.innerHeight, 0.5, 240);
+    var camera = new THREE.PerspectiveCamera(42, w / h, 0.5, 240);
 
-    var bufW = Math.floor(root.innerWidth * pixelRatio), bufH = Math.floor(root.innerHeight * pixelRatio);
-    var composerTarget = new THREE.WebGLRenderTarget(bufW, bufH, { type: THREE.HalfFloatType, samples: 4 });
+    var isWebGL2 = !!(renderer.capabilities && renderer.capabilities.isWebGL2);
+    var hasHalfFloat = false;
+    try {
+      if (renderer.extensions) {
+        hasHalfFloat = isWebGL2
+          ? (renderer.extensions.has('EXT_color_buffer_float') || renderer.extensions.has('EXT_color_buffer_half_float'))
+          : renderer.extensions.has('EXT_color_buffer_half_float');
+      }
+    } catch (e) {
+      hasHalfFloat = false;
+    }
+    var targetType = hasHalfFloat ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    var targetSamples = (isWebGL2 && renderer.capabilities.maxSamples > 0) ? Math.min(4, renderer.capabilities.maxSamples) : 0;
+    var composerTarget = new THREE.WebGLRenderTarget(w * pixelRatio, h * pixelRatio, {
+      type: targetType,
+      samples: targetSamples
+    });
     var composer = new deps.EffectComposer(renderer, composerTarget);
+    composer.setPixelRatio(pixelRatio);
+    composer.setSize(w, h);
     composer.addPass(new deps.RenderPass(scene, camera));
-    var bloomPass = new deps.UnrealBloomPass(new THREE.Vector2(bufW, bufH), 0.85, 0.72, 1.0);
+    var bloomPass = new deps.UnrealBloomPass(new THREE.Vector2(w, h), 0.85, 0.72, 1.0);
     composer.addPass(bloomPass);
     var finalPass = new deps.ShaderPass(SH.finalPass);
     composer.addPass(finalPass);
     composer.addPass(new deps.OutputPass());
 
     var uTime = { value: 0 };           // shared by every animated material
-    var uPointScale = { value: bufH * 0.5 };
+    var uPointScale = { value: h * pixelRatio * 0.5 };
 
     /** Pre-multiplied additive blending for glow materials. */
     function additive(params) {
@@ -610,6 +638,7 @@
     var camZoom = 1;
     var keys = {};
     var drag = { active: false, x: 0, y: 0, activity: 0 };
+    function endDrag() { drag.active = false; canvas.classList.remove('dragging'); }
     var toastTimer = 0;
     var bannerTimer = 0;
 
@@ -654,6 +683,11 @@
       clearT = 0;
       camFocus.set(player.x * 0.62 + view.center[0] * 0.38, 0, player.z * 0.62 + view.center[1] * 0.38);
       for (var i = 0; i < TRAIL_N; i++) trail.life[i] = 0;
+      for (var r = 0; r < ripples.length; r++) {
+        ripples[r].t = 1;
+        ripples[r].mesh.visible = false;
+      }
+      endDrag();
       $('hud-stage').textContent = 'STAGE ' + stage.id + ' / ' + STAGES.length;
       $('hud-name').textContent = stage.name;
       $('hud-hint').textContent = stage.hint;
@@ -672,6 +706,7 @@
 
     function startRespawn(type) {
       if (respawn) return;
+      endDrag();
       respawn = { t: 0, type: type, moved: false };
       if (type === 'caught') {
         stats.caught++;
@@ -714,6 +749,7 @@
 
     function showEnding() {
       state = 'ending';
+      endDrag();
       var t = Math.floor(stats.time);
       var mm = Math.floor(t / 60), ss = t % 60;
       $('end-time').textContent = (mm < 10 ? '0' : '') + mm + ':' + (ss < 10 ? '0' : '') + ss;
@@ -722,9 +758,12 @@
       $('ending').className = 'overlay show';
       $('hud').className = 'hud hidden';
       fx.fadeTarget = 0.28;
+      var btnReplay = $('btn-replay');
+      if (btnReplay) btnReplay.focus();
     }
 
     function beginGame() {
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       Audio.init();
       $('title-screen').className = 'overlay';
       $('hud').className = 'hud';
@@ -733,6 +772,7 @@
     }
 
     function replay() {
+      if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
       Audio.init();
       stats.time = 0; stats.falls = 0; stats.caught = 0; stats.restarts = 0;
       $('ending').className = 'overlay';
@@ -750,11 +790,12 @@
     var GAME_KEYS = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, Space: 1, KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1, KeyQ: 1, KeyE: 1, KeyZ: 1, KeyX: 1, KeyR: 1 };
 
     root.addEventListener('keydown', function (e) {
+      Audio.init();
       if (GAME_KEYS[e.code]) e.preventDefault();
       if (e.repeat) return;
       keys[e.code] = true;
       if (state === 'title' && (e.code === 'Enter' || e.code === 'Space')) { beginGame(); return; }
-      if (state === 'ending' && e.code === 'Enter') { replay(); return; }
+      if (state === 'ending' && (e.code === 'Enter' || e.code === 'Space')) { replay(); return; }
       if (e.code === 'Space') player.jumpBuf = 0.13;
       if (e.code === 'KeyR') restartStage();
       if (e.code === 'KeyM') toggleMute();
@@ -772,15 +813,15 @@
       canvas.classList.add('dragging');
     });
     canvas.addEventListener('pointermove', function (e) {
-      if (!drag.active || state !== 'playing' || respawn) return;
+      if (!drag.active) return;
       var dx = e.clientX - drag.x, dy = e.clientY - drag.y;
       drag.x = e.clientX;
       drag.y = e.clientY;
+      if (state !== 'playing' || respawn) return;
       sim.theta -= dx * 0.0065;
       sim.height = Math.max(stage.light.minH, Math.min(stage.light.maxH, sim.height - dy * 0.018));
       drag.activity = Math.min(1, drag.activity + (Math.abs(dx) + Math.abs(dy)) * 0.03);
     });
-    function endDrag() { drag.active = false; canvas.classList.remove('dragging'); }
     canvas.addEventListener('pointerup', endDrag);
     canvas.addEventListener('pointercancel', endDrag);
     canvas.addEventListener('contextmenu', function (e) { e.preventDefault(); });
@@ -802,14 +843,15 @@
     $('btn-replay').addEventListener('click', replay);
 
     root.addEventListener('resize', function () {
-      var w = root.innerWidth, h = root.innerHeight;
+      var rw = Math.max(1, root.innerWidth), rh = Math.max(1, root.innerHeight);
       pixelRatio = Math.min(root.devicePixelRatio || 1, 2);
       renderer.setPixelRatio(pixelRatio);
-      renderer.setSize(w, h);
-      composer.setSize(Math.floor(w * pixelRatio), Math.floor(h * pixelRatio));
-      camera.aspect = w / h;
+      renderer.setSize(rw, rh);
+      composer.setPixelRatio(pixelRatio);
+      composer.setSize(rw, rh);
+      camera.aspect = rw / rh;
       camera.updateProjectionMatrix();
-      uPointScale.value = h * pixelRatio * 0.5;
+      uPointScale.value = rh * pixelRatio * 0.5;
     });
 
     /* ================================================================ */
@@ -1079,6 +1121,9 @@
         var d = Math.hypot(player.x - stage.portal[0], player.z - stage.portal[1]);
         if (d < 1.25) {
           state = 'clear';
+          player.vx = 0;
+          player.vy = 0;
+          player.vz = 0;
           clearT = 0;
           exposure = 0;
           Audio.fanfare(stageIndex === STAGES.length - 1);
@@ -1156,15 +1201,25 @@
       updateLightControl(dt);
       sim.time += dt;
       world = World.compute(stage, sim);
-      syncStageVisuals(dt);
 
-      if (state !== 'clear') updatePlayer(dt);
+      if (state === 'playing') updatePlayer(dt);
       updateDetection(dt);
       updateRespawn(dt);
       updatePortal(dt);
 
       updateTrail(dt);
       updateRipples(dt);
+    }
+
+    function frame(nowMs) {
+      root.requestAnimationFrame(frame);
+      var dt = Math.min(0.05, Math.max(0, (nowMs - last) / 1000));
+      last = nowMs;
+      // two physics sub-steps keep fast falls and thin shadows stable
+      var sub = dt > 0.02 ? 2 : 1;
+      for (var s = 0; s < sub; s++) step(dt / sub);
+
+      syncStageVisuals(dt);
       updateCamera(dt, firstFrame);
       updateHud(dt);
 
@@ -1177,15 +1232,7 @@
 
       Audio.update(dt, state === 'playing' ? humLevel : 0, state === 'playing' && !respawn ? exposure : 0);
       firstFrame = false;
-    }
 
-    function frame(nowMs) {
-      root.requestAnimationFrame(frame);
-      var dt = Math.min(0.05, Math.max(0, (nowMs - last) / 1000));
-      last = nowMs;
-      // two physics sub-steps keep fast falls and thin shadows stable
-      var sub = dt > 0.02 ? 2 : 1;
-      for (var s = 0; s < sub; s++) step(dt / sub);
       composer.render();
     }
 
@@ -1193,6 +1240,11 @@
     fx.fade = 0;
     fx.fadeTarget = 1;
     SW.booted = true;
+    var btnStart = $('btn-start');
+    if (btnStart) {
+      btnStart.disabled = false;
+      btnStart.textContent = '시작하기';
+    }
     SW.debug = {
       get state() { return state; },
       get stageIndex() { return stageIndex; },

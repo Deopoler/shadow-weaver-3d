@@ -38,17 +38,19 @@ async function main() {
     'about:blank'
   ], { stdio: 'ignore' });
 
-  let target = null;
-  for (let i = 0; i < 60 && !target; i++) {
-    await sleep(250);
-    try {
-      const list = await (await fetch('http://127.0.0.1:' + PORT + '/json')).json();
-      target = list.find(t => t.type === 'page');
-    } catch (e) { /* not up yet */ }
-  }
-  if (!target) throw new Error('Chrome DevTools endpoint did not come up');
+  let ws = null;
+  try {
+    let target = null;
+    for (let i = 0; i < 60 && !target; i++) {
+      await sleep(250);
+      try {
+        const list = await (await fetch('http://127.0.0.1:' + PORT + '/json')).json();
+        target = list.find(t => t.type === 'page');
+      } catch (e) { /* not up yet */ }
+    }
+    if (!target) throw new Error('Chrome DevTools endpoint did not come up');
 
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
+    ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   let seq = 0;
   const pending = new Map();
@@ -146,7 +148,7 @@ async function main() {
   let booted = false;
   for (let i = 0; i < 120 && !booted; i++) { await sleep(250); try { booted = await evaluate('!!(window.SW && SW.booted)'); } catch (e) { /* loading */ } }
   check('game boots from file:// with CDN three.js', booted);
-  if (!booted) { console.log(errors.join('\n')); chrome.kill(); process.exit(1); }
+  if (!booted) { console.log(errors.join('\n')); failures++; throw new Error('Game failed to boot'); }
   await sleep(1500);
   await shot('00-title');
   check('title overlay is visible', await evaluate('document.getElementById("title-screen").classList.contains("show")'));
@@ -333,11 +335,11 @@ async function main() {
     await waitFor('SW.World.shadowAt(d.world.polys, 0, 0) && (d.sim.time % 18 > 1.5 && d.sim.time % 18 < 7.0)', 25000, 'dual bobbing bridge alignment');
     if (attempt === 0) await shot('17-stage5-aligned-bridge');
     // Cross the dual-bobbing bridge via tested waypoints
-    await walkTo(-3.5, 2.0, { timeout: 3000 });
-    await walkTo(0.5, -0.5, { timeout: 3000 });
-    await walkTo(4.5, -2.5, { timeout: 3000 });
-    await walkTo(8.0, -4.5, { timeout: 3000 });
-    await walkTo(12, -6, { timeout: 4000, until: 'd.player.y < -1 || d.player.x > 7' });
+    await walkTo(-3.5, 2.0, { timeout: 5000, until: 'd.player.y < -1' });
+    await walkTo(0.5, -0.5, { timeout: 5000, until: 'd.player.y < -1' });
+    await walkTo(4.5, -2.5, { timeout: 5000, until: 'd.player.y < -1' });
+    await walkTo(8.0, -4.5, { timeout: 5000, until: 'd.player.y < -1' });
+    await walkTo(12, -6, { timeout: 5000, until: 'd.player.y < -1 || d.player.x > 7' });
   }
   check('crossed timed dual-bobbing shadow bridge to goal platform', await dbg('d.player.x > 6.5 && d.player.y === 0'));
   await shot('18-stage5-goal-platform');
@@ -414,8 +416,18 @@ async function main() {
   check('no exceptions or console errors', errors.length === 0, errors.length ? '\n    ' + errors.join('\n    ') : '');
 
   console.log('\nscreenshots: ' + shotDir);
-  ws.close();
-  chrome.kill();
+  } finally {
+    if (ws) {
+      try { ws.close(); } catch (e) {}
+    }
+    if (chrome) {
+      try { chrome.kill(); } catch (e) {}
+    }
+    try {
+      fs.rmSync(profile, { recursive: true, force: true });
+    } catch (e) {}
+  }
+
   console.log(failures ? failures + ' CHECK(S) FAILED' : 'ALL E2E CHECKS PASSED');
   process.exit(failures ? 1 : 0);
 }
