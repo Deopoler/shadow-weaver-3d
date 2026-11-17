@@ -420,6 +420,12 @@
             sampleBuf[1] = c3Buf;
             for (var vIdx = 0; vIdx < 8; vIdx++) sampleBuf[2 + vIdx] = oc.verts[vIdx];
 
+            // The occluder counts as lit through the mirror if ANY sample ray is clear, and then its
+            // whole clipped reflected shadow is kept, even where some rays are blocked by another
+            // occluder. That is deliberate, not an approximation error: a ground point whose mirror
+            // path is blocked by occluder k is dark in the mirror light anyway (k's reflected shadow),
+            // so it is shadow either way. Rejecting only when every sample is blocked models
+            // "the mirror light does not reach this occluder at all".
             var chosenHit = null;
             for (var sIdx = 0; sIdx < 10; sIdx++) {
               var tgt = sampleBuf[sIdx];

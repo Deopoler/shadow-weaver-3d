@@ -1234,11 +1234,14 @@
         r = Geo.pushOutOfRect(nx, nz, PLAYER_R, oc.pos[0] - oc.size[0] / 2, oc.pos[0] + oc.size[0] / 2, oc.pos[2] - oc.size[2] / 2, oc.pos[2] + oc.size[2] / 2);
         nx = r[0]; nz = r[1];
       }
-      // once below the floor, tower walls are solid too
+      // once below the floor, tower walls are solid too. The push radius ramps up from 0 to
+      // PLAYER_R while sinking from -0.35 to -1.0, so a player who stepped off with their body
+      // still overlapping the edge slides out smoothly instead of popping 0.32 units in one frame.
       if (p.y < -0.35) {
+        var wallR = PLAYER_R * Math.min(1, (-0.35 - p.y) / 0.65);
         for (i = 0; i < stage.platforms.length; i++) {
           var pl = stage.platforms[i];
-          r = Geo.pushOutOfRect(nx, nz, PLAYER_R, pl.x0, pl.x1, pl.z0, pl.z1);
+          r = Geo.pushOutOfRect(nx, nz, wallR, pl.x0, pl.x1, pl.z0, pl.z1);
           nx = r[0]; nz = r[1];
         }
       }
